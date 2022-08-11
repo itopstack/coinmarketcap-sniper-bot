@@ -23,12 +23,12 @@ const addresses = {
   BUSD: "0xe9e7cea3dedca5984780bafc599bd69add087d56",
   recipient: process.env.recipient,
 };
-const mnemonic = process.env.mnemonic;
+const privateKey = process.env.privateKey;
 const apiId = parseInt(process.env.apiId);
 const apiHash = process.env.apiHash;
 const stringSession = new StringSession(process.env.stringSession);
 const node = process.env.node;
-const wallet = new ethers.Wallet.fromMnemonic(mnemonic);
+const wallet = new ethers.Wallet(privateKey);
 const provider = new ethers.providers.JsonRpcProvider(node);
 
 const account = wallet.connect(provider);
