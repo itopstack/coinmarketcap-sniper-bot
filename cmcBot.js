@@ -6,7 +6,7 @@ https://t.me/joinchat/b17jE6EbQX5kNWY8 use this link and subscribe.
 Turn on two step verification in telegram.
 Go to my.telegram.org and create App to get api_id and api_hash.
 */
-const { Api, TelegramClient } = require("telegram");
+const { TelegramClient } = require("telegram");
 const { StringSession } = require("telegram/sessions");
 const input = require("input");
 const { NewMessage } = require("telegram/events");
@@ -21,7 +21,6 @@ const addresses = {
   WBNB: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
   pancakeRouter: "0x10ED43C718714eb63d5aA57B78B54704E256024E",
   BUSD: "0xe9e7cea3dedca5984780bafc599bd69add087d56",
-  buyContract: "0xDC56800e179964C3C00a73f73198976397389d26",
   recipient: process.env.recipient,
 };
 const mnemonic = process.env.mnemonic;
@@ -38,6 +37,7 @@ const pancakeAbi = [
   "function swapExactTokensForETHSupportingFeeOnTransferTokens(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline)",
   "function swapExactTokensForETH(uint256 amountIn, uint256 amountOutMin, address[] path, address to, uint256 deadline)",
   "function swapExactETHForTokens(uint amountOutMin, address[] calldata path, address to, uint deadline)",
+  "function swapExactETHForTokensSupportingFeeOnTransferTokens(uint amountOutMin, address[] calldata path, address to, uint deadline) external payable",
 ];
 const pancakeRouter = new ethers.Contract(
   addresses.pancakeRouter,
@@ -49,7 +49,6 @@ let tokenAbi = [
   "function balanceOf(address account) external view returns (uint256)",
   "event Transfer(address indexed from, address indexed to, uint amount)",
   "function name() view returns (string)",
-  "function buyTokens(address tokenAddress, address to) payable",
   "function decimals() external view returns (uint8)",
   "function fifteenMinutesLock() public view returns (uint256)",
   "function isMintable() public view returns (uint256)",
@@ -58,11 +57,6 @@ let tokenAbi = [
 let token = [];
 var sellCount = 0;
 var buyCount = 0;
-const buyContract = new ethers.Contract(
-  addresses.buyContract,
-  tokenAbi,
-  account
-);
 const CoinMarketCapCoinGeckoChannel = 1517585345;
 const CoinmarketcapFastestAlertsChannel = 1519789792;
 var dontBuyTheseTokens;
@@ -73,12 +67,12 @@ const version = "v2";
  * Buy tokens
  *
  * */
-async function buy() {
+async function buy(tokenObject) {
   var isScam;
   try {
     // Some scam contracts have been showing up on CMC channel recently including token contracts like BEE INU and No Limit Ape tokens
     // if contract has fifteenMinutesLock function it is most likly from the same scammer and we are not going to buy it.
-    var s = await token[buyCount].contract.fifteenMinutesLock();
+    await token[buyCount].contract.fifteenMinutesLock();
     isScam = true;
     console.log("\u001b[1;31m" + "Scam Token not buying" + "\u001b[0m", "\n");
     token.pop();
@@ -86,7 +80,7 @@ async function buy() {
     // No fifTeenMinutesLock function we should buy it
     isScam = false;
     try {
-      var s = await token[buyCount].contract.isMintable();
+      await token[buyCount].contract.isMintable();
       isScam = true;
       console.log(
         "\u001b[1;31m" + "Scam Token not buying (Moonseer dev)" + "\u001b[0m",
@@ -103,15 +97,35 @@ async function buy() {
     const value = ethers.utils
       .parseUnits(token[buyCount].investmentAmount, "ether")
       .toString();
-    const tx = await buyContract.buyTokens(
-      token[buyCount].tokenAddress,
-      addresses.recipient,
-      {
-        value: value,
-        gasPrice: token[buyCount].gasPrice,
-        gasLimit: config.myGasLimit,
-      }
-    );
+
+    let tx;
+    if (tokenObj.tokenBuyTax > 1) {
+      tx =
+        await pancakeRouter.swapExactETHForTokensSupportingFeeOnTransferTokens(
+          0,
+          tokenObject.buyPath,
+          addresses.recipient,
+          Math.floor(Date.now() / 1000) + 60 * 5,
+          {
+            value: value,
+            gasPrice: token[buyCount].gasPrice,
+            gasLimit: config.myGasLimit,
+          }
+        );
+    } else {
+      tx = await pancakeRouter.swapExactETHForTokens(
+        0,
+        tokenObject.buyPath,
+        addresses.recipient,
+        Math.floor(Date.now() / 1000) + 60 * 5,
+        {
+          value: value,
+          gasPrice: token[buyCount].gasPrice,
+          gasLimit: config.myGasLimit,
+        }
+      );
+    }
+
     const receipt = await tx.wait();
     console.log(
       "\u001b[1;32m" + "✔ Buy transaction hash: ",
@@ -260,9 +274,6 @@ async function checkForProfit(token) {
             "\u001b[38;5;33m" + "Setting new StopLoss!" + "\u001b[0m"
           );
         }
-        let timeStamp = new Date().toLocaleString();
-        const enc = (s) => new TextEncoder().encode(s);
-        //process.stdout.write(enc(`${timeStamp} --- ${tokenName} --- Current Value in BNB: ${ethers.utils.formatUnits(currentValue)} --- Profit At: ${ethers.utils.formatUnits(profitDesired)} --- Stop Loss At: ${ethers.utils.formatUnits(stopLoss)} \r`));
         try {
           if (token.previousValue.gt(token.currentValue)) {
             console.log(
@@ -371,7 +382,6 @@ async function sell(tokenObj, isProfit) {
       balanceToSell,
       tokenObj.sellPath
     );
-    const sellAmountsOutMin = sellAmount[1].sub(sellAmount[1].div(2));
     if (tokenObj.tokenSellTax > 1) {
       const tx =
         await pancakeRouter.swapExactTokensForETHSupportingFeeOnTransferTokens(
@@ -379,7 +389,7 @@ async function sell(tokenObj, isProfit) {
           0,
           tokenObj.sellPath,
           addresses.recipient,
-          Math.floor(Date.now() / 1000) + 60 * 20,
+          Math.floor(Date.now() / 1000) + 60 * 5,
           {
             gasPrice: config.myGasPriceForApproval,
             gasLimit: config.myGasLimit,
@@ -576,6 +586,7 @@ function onNewMessageCoinGeckoCoinMarketCap(message) {
         tokenAddress: address,
         didBuy: false,
         hasSold: false,
+        tokenBuyTax: slipBuy,
         tokenSellTax: slipSell,
         buyPath: [addresses.WBNB, address],
         sellPath: [address, addresses.WBNB],
@@ -598,7 +609,7 @@ function onNewMessageCoinGeckoCoinMarketCap(message) {
         previousValue: 0,
       });
       console.log("<<< Attention! Buying token now! >>> Contract:", address);
-      buy();
+      buy(token);
     } else {
       console.log(
         "Not buying this token does not match strategy or liquidity is not BNB. Waiting for telegram notification to buy...",
@@ -646,6 +657,7 @@ function onNewMessageCoinMarketCapFastestAlerts(message) {
         tokenAddress: address,
         didBuy: false,
         hasSold: false,
+        tokenBuyTax: slipBuy,
         tokenSellTax: slipSell,
         buyPath: [addresses.WBNB, address],
         sellPath: [address, addresses.WBNB],
@@ -668,7 +680,7 @@ function onNewMessageCoinMarketCapFastestAlerts(message) {
         previousValue: 0,
       });
       console.log("<<< Attention! Buying token now! >>> Contract:", address);
-      buy();
+      buy(token);
     } else {
       console.log(
         "Not buying this token does not match strategy or liquidity is not BNB. Waiting for telegram notification to buy...",
